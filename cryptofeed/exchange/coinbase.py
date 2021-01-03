@@ -93,7 +93,8 @@ class Coinbase(Feed):
                             bid=Decimal(msg['best_bid']),
                             ask=Decimal(msg['best_ask']),
                             timestamp=timestamp_normalize(self.id, msg['time']),
-                            receipt_timestamp=timestamp)
+                            receipt_timestamp=timestamp,
+                            sequence_no=msg['sequence'])
 
     async def _book_update(self, msg: dict, timestamp: float):
         '''
@@ -112,6 +113,7 @@ class Coinbase(Feed):
         '''
         pair = pair_exchange_to_std(msg['product_id'])
         ts = timestamp_normalize(self.id, msg['time'])
+        sequence_no = msg['sequence']
 
         if self.keep_l3_book and ('full' in self.channels or ('full' in self.config and pair in self.config['full'])):
             delta = {BID: [], ASK: []}
@@ -134,7 +136,7 @@ class Coinbase(Feed):
                 self.l3_book[pair][side][price][maker_order_id] = new_size
                 delta[side].append((maker_order_id, price, new_size))
 
-            await self.book_callback(self.l3_book[pair], L3_BOOK, pair, False, delta, ts, timestamp)
+            await self.book_callback(self.l3_book[pair], L3_BOOK, pair, False, delta, ts, timestamp, sequence_no=sequence_no)
 
         order_type = self.order_type_map.get(msg['taker_order_id'])
         await self.callback(TRADES,
@@ -146,7 +148,8 @@ class Coinbase(Feed):
                             price=Decimal(msg['price']),
                             timestamp=ts,
                             receipt_timestamp=timestamp,
-                            order_type=order_type
+                            order_type=order_type,
+                            sequence_no=sequence_no
                             )
 
     async def _pair_level2_snapshot(self, msg: dict, timestamp: float):
@@ -167,6 +170,7 @@ class Coinbase(Feed):
     async def _pair_level2_update(self, msg: dict, timestamp: float):
         pair = pair_exchange_to_std(msg['product_id'])
         ts = timestamp_normalize(self.id, msg['time'])
+        sequence_no = msg['sequence']
         delta = {BID: [], ASK: []}
         for side, price, amount in msg['changes']:
             side = BID if side == 'buy' else ASK
@@ -181,7 +185,7 @@ class Coinbase(Feed):
                 bidask[price] = amount
                 delta[side].append((price, amount))
 
-        await self.book_callback(self.l2_book[pair], L2_BOOK, pair, False, delta, ts, timestamp)
+        await self.book_callback(self.l2_book[pair], L2_BOOK, pair, False, delta, ts, timestamp, sequence_no=sequence_no)
 
     async def _book_snapshot(self, pairs: list):
         # Coinbase needs some time to send messages to us
@@ -215,7 +219,7 @@ class Coinbase(Feed):
                     else:
                         self.l3_book[npair][side][price] = {order_id: size}
                     self.order_map[order_id] = (price, size)
-            await self.book_callback(self.l3_book[npair], L3_BOOK, npair, True, None, timestamp, timestamp)
+            await self.book_callback(self.l3_book[npair], L3_BOOK, npair, True, None, timestamp, timestamp, sequence_no=self.seq_no[npair])
 
     async def _open(self, msg: dict, timestamp: float):
         if not self.keep_l3_book:
@@ -227,6 +231,7 @@ class Coinbase(Feed):
         pair = pair_exchange_to_std(msg['product_id'])
         order_id = msg['order_id']
         ts = timestamp_normalize(self.id, msg['time'])
+        sequence_no = msg['sequence']
 
         if price in self.l3_book[pair][side]:
             self.l3_book[pair][side][price][order_id] = size
@@ -236,7 +241,7 @@ class Coinbase(Feed):
 
         delta[side].append((order_id, price, size))
 
-        await self.book_callback(self.l3_book[pair], L3_BOOK, pair, False, delta, ts, timestamp)
+        await self.book_callback(self.l3_book[pair], L3_BOOK, pair, False, delta, ts, timestamp, sequence_no=sequence_no)
 
     async def _done(self, msg: dict, timestamp: float):
         """
@@ -262,13 +267,14 @@ class Coinbase(Feed):
             side = ASK if msg['side'] == 'sell' else BID
             pair = pair_exchange_to_std(msg['product_id'])
             ts = timestamp_normalize(self.id, msg['time'])
+            sequence_no = msg['sequence']
 
             del self.l3_book[pair][side][price][order_id]
             if len(self.l3_book[pair][side][price]) == 0:
                 del self.l3_book[pair][side][price]
             delta[side].append((order_id, price, 0))
 
-            await self.book_callback(self.l3_book[pair], L3_BOOK, pair, False, delta, ts, timestamp)
+            await self.book_callback(self.l3_book[pair], L3_BOOK, pair, False, delta, ts, timestamp, sequence_no=sequence_no)
 
     async def _received(self, msg: dict, timestamp: float):
         """

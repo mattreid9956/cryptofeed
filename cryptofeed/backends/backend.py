@@ -11,27 +11,33 @@ from cryptofeed.defines import BID, ASK
 
 
 class BackendBookCallback:
-    async def __call__(self, *, feed: str, pair: str, book: dict, timestamp: float, receipt_timestamp: float):
-        data = {'timestamp': timestamp, 'receipt_timestamp': receipt_timestamp, 'delta': False, BID: {}, ASK: {}}
+    async def __call__(self, *, feed: str, pair: str, book: dict, timestamp: float, receipt_timestamp: float, sequence_no: int = None):
+        data = {'timestamp': timestamp, 'receipt_timestamp': receipt_timestamp, 
+                'delta': False, BID: {}, ASK: {}, 
+                'sequence_no': sequence_no}
         book_convert(book, data, convert=self.numeric_type)
         await self.write(feed, pair, timestamp, receipt_timestamp, data)
 
 
 class BackendBookDeltaCallback:
-    async def __call__(self, *, feed: str, pair: str, delta: dict, timestamp: float, receipt_timestamp: float):
-        data = {'timestamp': timestamp, 'receipt_timestamp': receipt_timestamp, 'delta': True, BID: {}, ASK: {}}
+    async def __call__(self, *, feed: str, pair: str, delta: dict, timestamp: float, receipt_timestamp: float, sequence_no: int = None):
+        data = {'timestamp': timestamp, 'receipt_timestamp': receipt_timestamp, 
+                'delta': True, BID: {}, ASK: {}, 
+                'sequence_no': sequence_no}
         book_delta_convert(delta, data, convert=self.numeric_type)
         await self.write(feed, pair, timestamp, receipt_timestamp, data)
 
 
 class BackendTradeCallback:
-    async def __call__(self, *, feed: str, pair: str, side: str, amount: Decimal, price: Decimal, order_id=None, timestamp: float, receipt_timestamp: float, order_type: str = None):
+    async def __call__(self, *, feed: str, pair: str, side: str, amount: Decimal, price: Decimal, order_id=None, timestamp: float, receipt_timestamp: float, order_type: str = None, sequence_no: int = None):
         data = {'feed': feed, 'pair': pair, 'timestamp': timestamp, 'receipt_timestamp': receipt_timestamp,
                 'side': side, 'amount': self.numeric_type(amount), 'price': self.numeric_type(price)}
         if order_id:
             data['id'] = order_id
         if order_type:
             data['order_type'] = order_type
+        if sequence_no:
+            data['sequence_no'] = sequence_no
         await self.write(feed, pair, timestamp, receipt_timestamp, data)
 
 
@@ -49,8 +55,12 @@ class BackendFundingCallback:
 
 
 class BackendTickerCallback:
-    async def __call__(self, *, feed: str, pair: str, bid: Decimal, ask: Decimal, timestamp: float, receipt_timestamp: float):
-        data = {'feed': feed, 'pair': pair, 'bid': self.numeric_type(bid), 'ask': self.numeric_type(ask), 'receipt_timestamp': receipt_timestamp, 'timestamp': timestamp}
+    async def __call__(self, *, feed: str, pair: str, bid: Decimal, ask: Decimal, timestamp: float, receipt_timestamp: float, sequence_no: int = None):
+        data = {'feed': feed, 'pair': pair, 'bid': self.numeric_type(bid), 
+                'ask': self.numeric_type(ask), 
+                'receipt_timestamp': receipt_timestamp, 
+                'timestamp': timestamp, 
+                'sequence_no': sequence_no}
         await self.write(feed, pair, timestamp, receipt_timestamp, data)
 
 

@@ -137,7 +137,7 @@ class Feed:
         data.update(info)
         return data
 
-    async def book_callback(self, book: dict, book_type: str, pair: str, forced: bool, delta: dict, timestamp: float, receipt_timestamp: float):
+    async def book_callback(self, book: dict, book_type: str, pair: str, forced: bool, delta: dict, timestamp: float, receipt_timestamp: float, sequence_no: int = None):
         """
         Three cases we need to handle here
 
@@ -168,7 +168,7 @@ class Feed:
                 self.updates[pair] += 1
                 if self.cross_check:
                     self.check_bid_ask_overlapping(book, pair)
-                await self.callback(BOOK_DELTA, feed=self.id, pair=pair, delta=delta, timestamp=timestamp, receipt_timestamp=receipt_timestamp)
+                await self.callback(BOOK_DELTA, feed=self.id, pair=pair, delta=delta, timestamp=timestamp, receipt_timestamp=receipt_timestamp, sequence_no=sequence_no)
                 if self.updates[pair] != self.book_update_interval:
                     return
             elif forced and self.max_depth:
@@ -187,9 +187,9 @@ class Feed:
         if self.cross_check:
             self.check_bid_ask_overlapping(book, pair)
         if book_type == L2_BOOK:
-            await self.callback(L2_BOOK, feed=self.id, pair=pair, book=book, timestamp=timestamp, receipt_timestamp=receipt_timestamp)
+            await self.callback(L2_BOOK, feed=self.id, pair=pair, book=book, timestamp=timestamp, receipt_timestamp=receipt_timestamp, sequence_no=sequence_no)
         else:
-            await self.callback(L3_BOOK, feed=self.id, pair=pair, book=book, timestamp=timestamp, receipt_timestamp=receipt_timestamp)
+            await self.callback(L3_BOOK, feed=self.id, pair=pair, book=book, timestamp=timestamp, receipt_timestamp=receipt_timestamp, sequence_no=sequence_no)
         self.updates[pair] = 0
 
     def check_bid_ask_overlapping(self, book, pair):

@@ -26,7 +26,7 @@ class Callback:
 
 class TradeCallback(Callback):
 
-    def __init__(self, callback, include_order_type=False):
+    def __init__(self, callback, include_order_type: bool = False, include_sequence_no: bool = False):
         """
         include_order_type is currently supported only on Kraken and Coinbase and enables
         the order_type field in callbacks, which contains information about the order type (market/limit).
@@ -35,33 +35,69 @@ class TradeCallback(Callback):
         do not need to specify any L3_BOOK callbacks)
         """
         self.include_order_type = include_order_type
+        self.include_sequence_no = include_sequence_no
         super().__init__(callback)
 
-    async def __call__(self, *, feed: str, pair: str, side: str, amount: Decimal, price: Decimal, order_id=None, timestamp: float, receipt_timestamp: float, order_type: str = None):
+    async def __call__(self, *, feed: str, pair: str, side: str, amount: Decimal, price: Decimal, order_id=None, 
+                       timestamp: float, receipt_timestamp: float, order_type: str = None, sequence_no: bool = None):
         kwargs = {}
         if self.include_order_type:
             kwargs['order_type'] = order_type
+        if self.include_sequence_no:
+            kwargs['sequence_no'] = sequence_no
+
         await super().__call__(feed, pair, order_id, timestamp, side, amount, price, receipt_timestamp, **kwargs)
 
 
 class TickerCallback(Callback):
-    async def __call__(self, *, feed: str, pair: str, bid: Decimal, ask: Decimal, timestamp: float, receipt_timestamp: float):
-        await super().__call__(feed, pair, bid, ask, timestamp, receipt_timestamp)
+    """
+    Ticker callback can be last matched trades or candles depends on venue
+    """
+    def __init__(self, callback, include_sequence_no: bool = False):
+        """
+        include_sequence_no default=False - allows one to store sequence number updates
+        """
+        self.include_sequence_no = include_sequence_no
+        super().__init__(callback)
+
+    async def __call__(self, *, feed: str, pair: str, bid: Decimal, ask: Decimal, 
+                       timestamp: float, receipt_timestamp: float, sequence_no: int):
+        kwargs = {}
+        if self.include_sequence_no:
+            kwargs['sequence_no'] = sequence_no
+        await super().__call__(feed, pair, bid, ask, timestamp, receipt_timestamp, **kwargs)
 
 
 class BookCallback(Callback):
     """
     For full L2/L3 book updates
     """
-    async def __call__(self, *, feed: str, pair: str, book: dict, timestamp: float, receipt_timestamp: float):
-        await super().__call__(feed, pair, book, timestamp, receipt_timestamp)
+    def __init__(self, callback, include_sequence_no: bool = False):
+        """
+        include_sequence_no default=False - allows one to store sequence number updates
+        """
+        self.include_sequence_no = include_sequence_no
+        super().__init__(callback)
+
+    async def __call__(self, *, feed: str, pair: str, book: dict, timestamp: float, receipt_timestamp: float, sequence_no: int):
+        kwargs = {}
+        if self.include_sequence_no:
+            kwargs['sequence_no'] = sequence_no
+        await super().__call__(feed, pair, book, timestamp, receipt_timestamp, sequence_no, **kwargs)
 
 
 class BookUpdateCallback(Callback):
     """
     For Book Deltas
     """
-    async def __call__(self, *, feed: str, pair: str, delta: dict, timestamp: float, receipt_timestamp: float):
+    def __init__(self, callback, include_sequence_no: bool = False):
+        """
+        include_sequence_no default=False - allows one to store sequence number updates
+        """
+        self.include_sequence_no = include_sequence_no
+        super().__init__(callback)
+
+    async def __call__(self, *, feed: str, pair: str, delta: dict, timestamp: float, receipt_timestamp: float, sequence_no: int):
         """
         Delta is in format of:
         {
@@ -70,7 +106,10 @@ class BookUpdateCallback(Callback):
         }
         prices with size 0 should be deleted from the book
         """
-        await super().__call__(feed, pair, delta, timestamp, receipt_timestamp)
+        kwargs = {}
+        if self.include_sequence_no:
+            kwargs['sequence_no'] = sequence_no
+        await super().__call__(feed, pair, delta, timestamp, receipt_timestamp, sequence_no, **kwargs)
 
 
 class LiquidationCallback(Callback):
