@@ -170,7 +170,7 @@ class Coinbase(Feed):
     async def _pair_level2_update(self, msg: dict, timestamp: float):
         pair = pair_exchange_to_std(msg['product_id'])
         ts = timestamp_normalize(self.id, msg['time'])
-        sequence_no = msg['sequence']
+        # sequence_no = msg['sequence']
         delta = {BID: [], ASK: []}
         for side, price, amount in msg['changes']:
             side = BID if side == 'buy' else ASK
@@ -185,7 +185,7 @@ class Coinbase(Feed):
                 bidask[price] = amount
                 delta[side].append((price, amount))
 
-        await self.book_callback(self.l2_book[pair], L2_BOOK, pair, False, delta, ts, timestamp, sequence_no=sequence_no)
+        await self.book_callback(self.l2_book[pair], L2_BOOK, pair, False, delta, ts, timestamp)
 
     async def _book_snapshot(self, pairs: list):
         # Coinbase needs some time to send messages to us
