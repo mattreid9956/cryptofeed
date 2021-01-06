@@ -304,7 +304,7 @@ class Coinbase(API):
     @staticmethod
     def _timestamp(ts, tz=None):
         if isinstance(ts, (float, int)):
-            d = pd.Timestamp.utcfromtimestamp(ts)
+            ts = pd.Timestamp.fromtimestamp(ts)
         d = pd.to_datetime(ts, utc=True)
         if tz:
             d = d.tz_convert(tz)
@@ -314,7 +314,7 @@ class Coinbase(API):
         res = {'pair': symbol, 'feed': self.ID}
         for i, name in enumerate(CANDLES_POSITION_NAMES):
             if name == 'time':
-                res['timestamp'] = self._timestamp(data[i], tz=tz)
+                res['timestamp'] = pd.Timestamp.fromtimestamp(data[i])
             else:
                 res[name] = float(Decimal(data[i]))
         return res
@@ -349,7 +349,7 @@ class Coinbase(API):
         granularity data over a larger time range, you will need to make multiple
         requests with new start/end ranges
         """
-        limit = 300
+        limit = 300 # return max of 300 rows per request
 
         # Check granularity
         if isinstance(granularity, pd.Timedelta):
@@ -360,9 +360,15 @@ class Coinbase(API):
 
         if end and not start:
             start = '2014-12-01'
-        if start:
+        if start:        
+            tz = None
+            if isinstance(end, pd.Timestamp):
+                tz = end.tz    
+            if isinstance(start, pd.Timestamp):
+                tz = start.tz  # Prefer start tz if present
             if not end:
                 end = pd.Timestamp.utcnow().tz_localize(None)
+
             start_id = pd.to_datetime(start, utc=True).floor(td) - td
             end_id_max = pd.to_datetime(end, utc=True).ceil(td)
             LOG.info(f"candles - stepping through {symbol} ({start}, {end})")
@@ -390,7 +396,7 @@ class Coinbase(API):
                     LOG.warning("Error %s: %s", r.status_code, r.text)
                     sleep(60)
                     continue
-                yield list(map(lambda x: self._candle_normalize(symbol, x), data))
+                yield list(map(lambda x: self._candle_normalize(symbol, x, tz=tz), data))
                 time.sleep(RATE_LIMIT_SLEEP)
                 start_id = end_id + td
         else:
