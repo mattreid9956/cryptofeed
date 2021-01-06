@@ -47,6 +47,22 @@ def test_rest_deribit():
     assert ret[0] == expected
 
 
+def test_rest_coinbase():
+    expected = {'timestamp': 1550062756.744, 
+                'pair': 'BTC-USD', 
+                'id': 59158401, 
+                'feed': 'COINBASE', 
+                'side': 'buy', 
+                'amount': 0.00514473, 
+                'price': 3580.07}
+    r = Rest()
+    ret = []
+    for data in r.coinbase.trades('BTC-USD', start='2019-02-13 12:59:10', end='2019-02-13 12:59:17'):
+        ret.extend(data)
+    assert len(ret) == 1
+    assert ret[0] == expected
+
+
 def test_rest_ftx():
     expected = {'timestamp': 1607691600.0,
                 'pair': 'BTC-PERP',

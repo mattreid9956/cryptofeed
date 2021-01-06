@@ -11,10 +11,12 @@ import logging
 import time
 from decimal import Decimal
 from time import sleep
+import itertools
+from typing import Union, Optional
 
 import pandas as pd
 import requests
-from pytz import UTC
+from pytz import UTC, timezone
 from sortedcontainers.sorteddict import SortedDict as sd
 from yapic import json
 
@@ -26,6 +28,8 @@ from cryptofeed.standards import normalize_trading_options, timestamp_normalize
 
 REQUEST_LIMIT = 10
 RATE_LIMIT_SLEEP = 0.2
+CANDLES_POSITION_NAMES = ['time', 'low', 'high', 'open', 'close', 'volume']
+
 LOG = logging.getLogger('rest')
 
 
@@ -124,13 +128,13 @@ class Coinbase(API):
             data = list(reversed(data))
             if len(data) == 0:
                 return bound
-            if pd.Timestamp(data[0]['time']) <= date <= pd.Timestamp(data[-1]['time']):
+            if pd.Timestamp(data[0]['time'], tzinfo=UTC) <= date <= pd.Timestamp(data[-1]['time'], tzinfo=UTC):
                 for idx in range(len(data)):
                     d = pd.Timestamp(data[idx]['time'])
                     if d >= date:
                         return data[idx]['trade_id']
             else:
-                if date > pd.Timestamp(data[0]['time']):
+                if date > pd.Timestamp(data[0]['time'], tzinfo=UTC):
                     lower = bound
                     bound = (upper + lower) // 2
                 else:
@@ -140,13 +144,13 @@ class Coinbase(API):
 
     def _trade_normalize(self, symbol: str, data: dict) -> dict:
         return {
-            'timestamp': timestamp_normalize(self.ID, data['time']),
+            'timestamp': pd.Timestamp(data['time']).timestamp(),
             'pair': symbol,
             'id': data['trade_id'],
             'feed': self.ID,
             'side': SELL if data['side'] == 'buy' else BUY,
-            'amount': data['size'],
-            'price': data['price'],
+            'amount': float(Decimal(data['size'])),
+            'price': float(Decimal(data['price'])),
         }
 
     def trades(self, symbol: str, start=None, end=None, retry=None, retry_wait=10):
@@ -296,3 +300,98 @@ class Coinbase(API):
             }
             for order in data
         ]
+
+    @staticmethod
+    def _timestamp(ts, tz=None):
+        if isinstance(ts, (float, int)):
+            d = pd.Timestamp.utcfromtimestamp(ts)
+        d = pd.to_datetime(ts, utc=True)
+        if tz:
+            d = d.tz_convert(tz)
+        return d
+        
+    def _candle_normalize(self, symbol: str, data: list, tz: Optional[Union[str, timezone]] = None) -> dict:
+        res = {'pair': symbol, 'feed': self.ID}
+        for i, name in enumerate(CANDLES_POSITION_NAMES):
+            if name == 'time':
+                res['timestamp'] = self._timestamp(data[i], tz=tz)
+            else:
+                res[name] = float(Decimal(data[i]))
+        return res
+
+    def _to_isoformat(self, dt: pd.Timestamp):
+        """Required as cryptostore doesnt allow +00:00 for UTC requires Z explicitly.
+        """
+        return dt.isoformat().replace("+00:00", 'Z')
+
+    def candles(self, symbol: str, start: Optional[Union[str, pd.Timestamp]] = None, end: Optional[Union[str, pd.Timestamp]] = None, granularity: Optional[Union[pd.Timedelta, int]] = 3600, retry=None, retry_wait=10):
+        """
+        Historic rate OHLC candles
+        [
+            [ time, low, high, open, close, volume ],
+            [ 1415398768, 0.32, 4.2, 0.35, 4.2, 12.3 ],
+            ...
+        ]
+
+        Parameters
+        ----------
+        :param symbol: the symbol to query data for e.g. BTC-USD
+        :param start: the start time (optional)
+        :param end: the end time (optional)
+        :param granularity: in seconds (int) or a specified pandas timedelta. This field must be one of the following values: {60, 300, 900, 3600, 21600, 86400}
+
+        If data points are readily available, your response may contain as many as 300 
+        candles and some of those candles may precede your declared start value.
+        
+        The maximum number of data points for a single request is 300 candles. 
+        If your selection of start/end time and granularity will result in more than 
+        300 data points, your request will be rejected. If you wish to retrieve fine 
+        granularity data over a larger time range, you will need to make multiple
+        requests with new start/end ranges
+        """
+        limit = 300
+
+        # Check granularity
+        if isinstance(granularity, pd.Timedelta):
+            granularity = granularity.total_seconds()
+        granularity = int(granularity)
+        assert granularity in {60, 300, 900, 3600, 21600, 86400}, 'Granularity must be in {60, 300, 900, 3600, 21600, 86400} as per https://docs.pro.coinbase.com/#get-historic-rates'
+        td = pd.to_timedelta(granularity, unit='s')
+
+        if end and not start:
+            start = '2014-12-01'
+        if start:
+            if not end:
+                end = pd.Timestamp.utcnow().tz_localize(None)
+            start_id = pd.to_datetime(start, utc=True).floor(td) - td
+            end_id_max = pd.to_datetime(end, utc=True).ceil(td)
+            LOG.info(f"candles - stepping through {symbol} ({start}, {end})")
+            while True:
+                end_id = start_id + limit * td
+                if end_id > end_id_max:
+                    end_id = end_id_max
+                if start_id > end_id_max:
+                    break
+                
+                url = f'/products/{symbol}/candles?granularity={granularity}&start={self._to_isoformat(start_id)}&end={self._to_isoformat(end_id)}'
+                LOG.debug(url)
+                r = self._request('GET', url, retry=retry, retry_wait=retry_wait)
+                if r.status_code == 429:
+                    time.sleep(10)
+                    continue
+                elif r.status_code != 200:
+                    LOG.warning("Error %s: %s", r.status_code, r.text)
+                    time.sleep(60)
+                    continue
+                data = r.json()
+                try:
+                    data = list(reversed(data))
+                except Exception:
+                    LOG.warning("Error %s: %s", r.status_code, r.text)
+                    sleep(60)
+                    continue
+                yield list(map(lambda x: self._candle_normalize(symbol, x), data))
+                time.sleep(RATE_LIMIT_SLEEP)
+                start_id = end_id + td
+        else:
+            yield [self._candle_normalize(symbol, d) for d in self._request('GET', f"/products/{symbol}/candles", retry=retry, retry_wait=retry_wait).json()]
