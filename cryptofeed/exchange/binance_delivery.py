@@ -18,18 +18,18 @@ LOG = logging.getLogger('feedhandler')
 class BinanceDelivery(Binance):
     id = BINANCE_DELIVERY
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, depth=1000, **kwargs):
-        super().__init__(pairs=pairs, channels=channels, callbacks=callbacks, depth=depth, **kwargs)
+    def __init__(self, depth=1000, **kwargs):
+        super().__init__(depth=depth, **kwargs)
         self.ws_endpoint = 'wss://dstream.binance.com'
         self.rest_endpoint = 'https://dapi.binance.com/dapi/v1'
         self.address = self._address()
 
     def _address(self):
         address = self.ws_endpoint + '/stream?streams='
-        for chan in self.channels if not self.config else self.config:
+        for chan in self.channels if not self.subscription else self.subscription:
             if chan == OPEN_INTEREST:
                 continue
-            for pair in self.pairs if not self.config else self.config[chan]:
+            for pair in self.symbols if not self.subscription else self.subscription[chan]:
                 pair = pair.lower()
                 if chan == TICKER:
                     stream = f"{pair}@bookTicker/"
@@ -68,10 +68,7 @@ class BinanceDelivery(Binance):
         pair = pair.upper()
 
         msg_type = msg.get('e')
-        if msg_type is None:
-            # For the BinanceDelivery API it appears
-            # the ticker stream (<symbol>@bookTicker) is
-            # the only payload without an "e" key describing the event type
+        if msg_type == 'bookTicker':
             await self._ticker(msg, timestamp)
         elif msg_type == 'depthUpdate':
             await self._book(msg, pair, timestamp)

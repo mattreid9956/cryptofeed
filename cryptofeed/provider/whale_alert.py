@@ -13,7 +13,7 @@ from json import JSONDecodeError
 
 from cryptofeed.defines import WHALE_ALERT, TRANSACTIONS
 from cryptofeed.feed import Feed
-from cryptofeed.standards import pair_exchange_to_std
+from cryptofeed.standards import symbol_exchange_to_std
 from cryptofeed.exceptions import RestResponseError
 
 
@@ -25,7 +25,7 @@ class WhaleAlert(Feed):
 
     id = WHALE_ALERT
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, config=None, **kwargs):
+    def __init__(self, **kwargs):
         """
         Parameters:
             kwargs['sleep_time'] (float - optional):
@@ -45,10 +45,7 @@ class WhaleAlert(Feed):
         self.sleep_time = kwargs.pop('sleep_time') if 'sleep_time' in kwargs else 6                      # Free plan is one request every 6 seconds.
         self.trans_min_value = kwargs.pop('trans_min_value') if 'trans_min_value' in kwargs else 500000  # Free plan is 500k$ transaction minimum value.
         max_history = kwargs.pop('max_history') if 'max_history' in kwargs else 3600                     # Free plan is 1 hour transaction history.
-        self.key_id = kwargs['key_id'] if 'key_id' in kwargs else None
-        super().__init__('https://api.whale-alert.io/v1/', pairs=pairs, channels=channels, config=config, callbacks=callbacks, **kwargs)
-        if not self.key_id:
-            LOG.error("No API key provided. Impossible to connect.")
+        super().__init__('https://api.whale-alert.io/v1/', **kwargs)
         # Shamlessly inspired from bmoscon/cryptostore/aggregator/aggregator.py
         if isinstance(max_history, str):
             multiplier = 1
@@ -66,7 +63,7 @@ class WhaleAlert(Feed):
         else:
             self.max_history = max_history
 
-        # `self.last_transaction_update` is voluntarily not reseted in `__reset()` to avoid storing twice the same data after a reset.
+        # `self.last_transaction_update` is voluntarily not reset in `__reset()` to avoid storing twice the same data after a reset.
         # dict({coin: (latest_cleared_timestamp, cursor, query_start_timestamp),...})
         # Whale Alert uses second-precise timestamps (not millisecond) which is why making chained calls is justified.
         # Making chained calls prevent having holes in the list of transactions.
@@ -88,13 +85,13 @@ class WhaleAlert(Feed):
             await asyncio.sleep(self.sleep_time)
 
         async with aiohttp.ClientSession() as session:
-            if self.config:
-                for chan in self.config:
-                    for coin in self.config[chan]:
+            if self.subscription:
+                for chan in self.subscription:
+                    for coin in self.subscription[chan]:
                         await handle(session, coin, chan)
             else:
                 for chan in self.channels:
-                    for coin in self.pairs:
+                    for coin in self.symbols:
                         await handle(session, coin, chan)
         return
 
@@ -151,7 +148,7 @@ class WhaleAlert(Feed):
                     del transaction['symbol']  # removing duplicate data with `pair` that is added
                     await self.callback(TRANSACTIONS,
                                         feed=self.id,
-                                        pair=pair_exchange_to_std(coin),
+                                        symbol=symbol_exchange_to_std(coin),
                                         # `timestamp` is already with the correct format in `transaction` dict (in unit second).
                                         **transaction, **to, **fro)
                     max_trans_ts = transaction['timestamp'] if transaction['timestamp'] > max_trans_ts else max_trans_ts

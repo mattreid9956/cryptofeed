@@ -17,18 +17,17 @@ LOG = logging.getLogger('feedhandler')
 class Deribit(Feed):
     id = DERIBIT
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, config=None, **kwargs):
-        super().__init__('wss://www.deribit.com/ws/api/v2', pairs=pairs,
-                         channels=channels, config=config, callbacks=callbacks, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__('wss://www.deribit.com/ws/api/v2', **kwargs)
 
         instruments = self.get_instruments()
         pairs = None
-        if self.config:
-            config_instruments = list(self.config.values())
+        if self.subscription:
+            config_instruments = list(self.subscription.values())
             pairs = [
                 pair for inner in config_instruments for pair in inner]
 
-        for pair in self.pairs if self.pairs else pairs:
+        for pair in self.symbols if self.symbols else pairs:
             if pair not in instruments:
                 raise ValueError(f"{pair} is not active on {self.id}")
         self.__reset()
@@ -78,7 +77,7 @@ class Deribit(Feed):
         for trade in msg["params"]["data"]:
             await self.callback(TRADES,
                                 feed=self.id,
-                                pair=trade["instrument_name"],
+                                symbol=trade["instrument_name"],
                                 order_id=trade['trade_id'],
                                 side=BUY if trade['direction'] == 'buy' else SELL,
                                 amount=Decimal(trade['amount']),
@@ -89,7 +88,7 @@ class Deribit(Feed):
             if 'liquidation' in trade:
                 await self.callback(LIQUIDATIONS,
                                     feed=self.id,
-                                    pair=trade["instrument_name"],
+                                    symbol=trade["instrument_name"],
                                     side=BUY if trade['direction'] == 'buy' else SELL,
                                     leaves_qty=Decimal(trade['amount']),
                                     price=Decimal(trade['price']),
@@ -133,7 +132,7 @@ class Deribit(Feed):
         pair = msg['params']['data']['instrument_name']
         ts = timestamp_normalize(self.id, msg['params']['data']['timestamp'])
         await self.callback(TICKER, feed=self.id,
-                            pair=pair,
+                            symbol=pair,
                             bid=Decimal(msg["params"]["data"]['best_bid_price']),
                             ask=Decimal(msg["params"]["data"]['best_ask_price']),
                             timestamp=ts,
@@ -141,7 +140,7 @@ class Deribit(Feed):
 
         if "current_funding" in msg["params"]["data"] and "funding_8h" in msg["params"]["data"]:
             await self.callback(FUNDING, feed=self.id,
-                                pair=pair,
+                                symbol=pair,
                                 timestamp=ts,
                                 receipt_timestamp=timestamp,
                                 rate=msg["params"]["data"]["current_funding"],
@@ -152,7 +151,7 @@ class Deribit(Feed):
         self.open_interest[pair] = oi
         await self.callback(OPEN_INTEREST,
                             feed=self.id,
-                            pair=pair,
+                            symbol=pair,
                             open_interest=oi,
                             timestamp=ts,
                             receipt_timestamp=timestamp
@@ -162,8 +161,8 @@ class Deribit(Feed):
         self.__reset()
         client_id = 0
         channels = []
-        for chan in self.channels if self.channels else self.config:
-            for pair in self.pairs if self.pairs else self.config[chan]:
+        for chan in self.channels if self.channels else self.subscription:
+            for pair in self.symbols if self.symbols else self.subscription[chan]:
                 channels.append(f"{chan}.{pair}.raw")
         await websocket.send(json.dumps(
             {

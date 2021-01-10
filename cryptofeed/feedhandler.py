@@ -6,7 +6,15 @@ associated with this software.
 '''
 import asyncio
 import logging
-from signal import SIGTERM, SIGINT, SIGHUP, SIGABRT
+from signal import SIGTERM, SIGINT, SIGABRT
+
+try:
+    # unix / macos only
+    from signal import SIGHUP
+    SIGNALS = (SIGTERM, SIGINT, SIGABRT, SIGHUP)
+except ImportError:
+    SIGNALS = (SIGTERM, SIGINT, SIGABRT)
+
 import zlib
 from collections import defaultdict
 from socket import error as socket_error
@@ -78,7 +86,7 @@ def setup_signal_handlers(loop):
     def handle_stop_signals():
         raise SystemExit
 
-    for signal in (SIGTERM, SIGINT, SIGHUP, SIGABRT):
+    for signal in SIGNALS:
         loop.add_signal_handler(signal, handle_stop_signals)
 
 
@@ -95,8 +103,9 @@ class FeedHandler:
             if defined, callback to save/process/handle raw message (primarily for debugging purposes)
         handler_enabled: boolean
             run message handlers (and any registered callbacks) when raw message capture is enabled
-        config: str
-            absolute path (including file name) of the config file. If not provided env var checked first, then local config.yaml
+        config: str, dict or None
+            if str, absolute path (including file name) of the config file. If not provided, config can also be a dictionary of values, or
+            can be None, which will default options. See docs/config.md for more information.
         """
         self.feeds = []
         self.retries = retries
@@ -106,11 +115,9 @@ class FeedHandler:
         self.log_messages_on_error = log_messages_on_error
         self.raw_message_capture = raw_message_capture
         self.handler_enabled = handler_enabled
-        self.config = Config(file_name=config)
+        self.config = Config(config=config)
 
-        lfile = 'feedhandler.log' if not self.config or not self.config.log.filename else self.config.log.filename
-        level = logging.WARNING if not self.config or not self.config.log.level else self.config.log.level
-        get_logger('feedhandler', lfile, level)
+        get_logger('feedhandler', self.config.log.filename, self.config.log.level)
 
     def playback(self, feed, filenames):
         loop = asyncio.get_event_loop()
@@ -138,7 +145,7 @@ class FeedHandler:
                 for line in fp:
                     timestamp, message = line.split(":", 1)
                     counter += 1
-                    await feed.message_handler(message, timestamp)
+                    await feed.message_handler(message, FakeWS(), timestamp)
             return {'messages_processed': counter, 'callbacks': dict(callbacks)}
 
     def add_feed(self, feed, timeout=120, **kwargs):
@@ -148,7 +155,7 @@ class FeedHandler:
         timeout: int
             number of seconds without a message before the feed is considered
             to be timed out. The connection will be closed, and if retries
-            have not been exhausted, the connection will be restablished.
+            have not been exhausted, the connection will be reestablished.
             If set to -1, no timeout will occur.
         kwargs: dict
             if a string is used for the feed, kwargs will be passed to the
@@ -156,27 +163,27 @@ class FeedHandler:
         """
         if isinstance(feed, str):
             if feed in _EXCHANGES:
-                self.feeds.append((_EXCHANGES[feed](**kwargs), timeout))
+                self.feeds.append((_EXCHANGES[feed](config=self.config, **kwargs), timeout))
             else:
                 raise ValueError("Invalid feed specified")
         else:
             self.feeds.append((feed, timeout))
 
-    def add_nbbo(self, feeds, pairs, callback, timeout=120):
+    def add_nbbo(self, feeds, symbols, callback, timeout=120):
         """
         feeds: list of feed classes
             list of feeds (exchanges) that comprises the NBBO
-        pairs: list str
-            the trading pairs
+        symbols: list str
+            the trading symbols
         callback: function pointer
             the callback to be invoked when a new tick is calculated for the NBBO
         timeout: int
             seconds without a message before a connection will be considered dead and reestablished.
             See `add_feed`
         """
-        cb = NBBO(callback, pairs)
+        cb = NBBO(callback, symbols)
         for feed in feeds:
-            self.add_feed(feed(channels=[L2_BOOK], pairs=pairs, callbacks={L2_BOOK: cb}), timeout=timeout)
+            self.add_feed(feed(channels=[L2_BOOK], symbols=symbols, callbacks={L2_BOOK: cb}), timeout=timeout)
 
     def run(self, start_loop: bool = True, install_signal_handlers: bool = True):
         """
@@ -194,36 +201,40 @@ class FeedHandler:
             LOG.error('No feeds specified')
             raise ValueError("No feeds specified")
 
-        try:
-            if start_loop:
-                try:
-                    import uvloop
-                    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-                except ImportError:
-                    pass
+        if start_loop:
+            try:
+                import uvloop
+                asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            except ImportError:
+                pass
 
-            loop = asyncio.get_event_loop()
-            # Good to enable when debugging
-            # loop.set_debug(True)
+        loop = asyncio.get_event_loop()
+        # Good to enable when debugging
+        # loop.set_debug(True)
 
-            if install_signal_handlers:
-                setup_signal_handlers(loop)
+        if install_signal_handlers:
+            setup_signal_handlers(loop)
 
-            for feed, timeout in self.feeds:
-                for conn, sub, handler in feed.connect():
-                    loop.create_task(self._connect(conn, sub, handler))
-                    self.timeout[conn.uuid] = timeout
+        for feed, timeout in self.feeds:
+            for conn, sub, handler in feed.connect():
+                loop.create_task(self._connect(conn, sub, handler))
+                self.timeout[conn.uuid] = timeout
 
-            if start_loop:
+        if start_loop:
+            try:
                 loop.run_forever()
+            except SystemExit:
+                LOG.info("System Exit received - shutting down")
+            except Exception:
+                LOG.error("Unhandled exception", exc_info=True)
+            finally:
+                self.stop(loop=loop)
 
-        except SystemExit:
-            LOG.info("System Exit received - shutting down")
-        except Exception:
-            LOG.error("Unhandled exception", exc_info=True)
-        finally:
-            for feed, _ in self.feeds:
-                loop.run_until_complete(feed.stop())
+    def stop(self, loop=None):
+        if not loop:
+            loop = asyncio.get_event_loop()
+        for feed, _ in self.feeds:
+            loop.run_until_complete(feed.stop())
 
     async def _watch(self, connection):
         if self.timeout[connection.uuid] == -1:

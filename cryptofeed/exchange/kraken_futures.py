@@ -23,16 +23,16 @@ LOG = logging.getLogger('feedhandler')
 class KrakenFutures(Feed):
     id = KRAKEN_FUTURES
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__('wss://futures.kraken.com/ws/v1', pairs=pairs, channels=channels, callbacks=callbacks, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__('wss://futures.kraken.com/ws/v1', **kwargs)
 
         instruments = self.get_instruments()
-        if self.config:
-            config_instruments = list(self.config.values())
-            self.pairs = [
+        if self.subscription:
+            config_instruments = list(self.subscription.values())
+            self.symbols = [
                 pair for inner in config_instruments for pair in inner]
 
-        for pair in self.pairs:
+        for pair in self.symbols:
             if pair not in instruments:
                 raise ValueError(f"{pair} is not active on {self.id}")
 
@@ -50,12 +50,12 @@ class KrakenFutures(Feed):
 
     async def subscribe(self, websocket):
         self.__reset()
-        for chan in self.channels if self.channels else self.config:
+        for chan in self.channels if self.channels else self.subscription:
             await websocket.send(json.dumps(
                 {
                     "event": "subscribe",
                     "feed": chan,
-                    "product_ids": self.pairs if not self.config else list(self.config[chan])
+                    "product_ids": self.symbols if not self.subscription else list(self.subscription[chan])
                 }
             ))
 
@@ -74,7 +74,7 @@ class KrakenFutures(Feed):
         }
         """
         await self.callback(TRADES, feed=self.id,
-                            pair=pair,
+                            symbol=pair,
                             side=BUY if msg['side'] == 'buy' else SELL,
                             amount=Decimal(msg['qty']),
                             price=Decimal(msg['price']),
@@ -98,7 +98,7 @@ class KrakenFutures(Feed):
             "maturityTime": 0
         }
         """
-        await self.callback(TICKER, feed=self.id, pair=pair, bid=msg['bid'], ask=msg['ask'], timestamp=timestamp, receipt_timestamp=timestamp)
+        await self.callback(TICKER, feed=self.id, symbol=pair, bid=msg['bid'], ask=msg['ask'], timestamp=timestamp, receipt_timestamp=timestamp)
 
     async def _book_snapshot(self, msg: dict, pair: str, timestamp: float):
         """
@@ -165,7 +165,7 @@ class KrakenFutures(Feed):
         if msg['tag'] == 'perpetual':
             await self.callback(FUNDING,
                                 feed=self.id,
-                                pair=pair,
+                                symbol=pair,
                                 timestamp=timestamp_normalize(self.id, msg['time']),
                                 receipt_timestamp=timestamp,
                                 tag=msg['tag'],
@@ -177,7 +177,7 @@ class KrakenFutures(Feed):
         else:
             await self.callback(FUNDING,
                                 feed=self.id,
-                                pair=pair,
+                                symbol=pair,
                                 timestamp=timestamp_normalize(self.id, msg['time']),
                                 receipt_timestamp=timestamp,
                                 tag=msg['tag'],
@@ -190,7 +190,7 @@ class KrakenFutures(Feed):
         self.open_interest[pair] = oi
         await self.callback(OPEN_INTEREST,
                             feed=self.id,
-                            pair=pair,
+                            symbol=pair,
                             open_interest=msg['openInterest'],
                             timestamp=timestamp_normalize(self.id, msg['time']),
                             receipt_timestamp=timestamp
