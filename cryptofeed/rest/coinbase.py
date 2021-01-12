@@ -302,7 +302,7 @@ class Coinbase(API):
         ]
 
     @staticmethod
-    def _timestamp(ts, tz=None):
+    def _timestamp(ts, tz: Optional[Union[str, timezone]] = None):
         if isinstance(ts, (float, int)):
             ts = pd.Timestamp.fromtimestamp(ts)
         d = pd.to_datetime(ts, utc=True)
@@ -314,7 +314,7 @@ class Coinbase(API):
         res = {'pair': symbol, 'feed': self.ID}
         for i, name in enumerate(CANDLES_POSITION_NAMES):
             if name == 'time':
-                res['timestamp'] = pd.Timestamp.fromtimestamp(data[i])
+                res['timestamp'] = self._timestamp(data[i], tz=tz)
             else:
                 res[name] = float(Decimal(data[i]))
         return res
